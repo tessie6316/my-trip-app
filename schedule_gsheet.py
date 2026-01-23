@@ -11,7 +11,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ローカルで動かすときの鍵ファイル名
 SECRET_FILE = 'secret.json'
 
-# あなたのスプレッドシートID (埋め込み済み)
+# あなたのスプレッドシートID
 SPREADSHEET_KEY = '1-8cu7x-zC41ot512uYHL0UhD7hxdfnr0zyQ1H3BrlmI'
 
 # ==========================================
@@ -21,10 +21,8 @@ SPREADSHEET_KEY = '1-8cu7x-zC41ot512uYHL0UhD7hxdfnr0zyQ1H3BrlmI'
 def get_sheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
-    # ★ここがポイント！
     # Streamlit Cloudの「Secrets」に鍵があるか確認
     if "gcp_key_json" in st.secrets:
-        # クラウド上の「秘密の金庫」から鍵情報を取り出す
         key_dict = json.loads(st.secrets["gcp_key_json"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, scope)
     else:
@@ -236,6 +234,29 @@ with tab3:
             top_score = ranked_df.iloc[0]["合計"]
             st.success(f"🎉 候補日は **{len(top_dates)}つ** あります！（スコア: {int(top_score)}点）")
             
+            # --- LINE用テキスト出力機能 ---
+            st.write("---")
+            st.subheader("📋 LINE連絡用コピー")
+            
+            # テキスト生成
+            clip_text = f"【{data['title']} 日程決定！🎉】\n\n"
+            clip_text += f"📅 日時: {top_dates[0]}\n"
+            clip_text += f"📊 参加スコア: {int(top_score)}点\n"
+            
+            ng_name = ranked_df.loc[top_dates[0], "NGの人"]
+            if ng_name:
+                clip_text += f"⚠️ NG: {ng_name}\n"
+            else:
+                clip_text += f"✨ 全員参加OK！\n"
+            
+            clip_text += "\n👇 詳細はこちら\n"
+            # 本番ではここにあなたのアプリのURLを入れると親切です
+            clip_text += "(ここにURLを貼る)"
+            
+            st.code(clip_text, language="text")
+            st.caption("👆 右上のコピーボタンを押してLINEに貼ってください")
+            # ---------------------------
+
             for d in top_dates:
                 ng_ppl = ranked_df.loc[d, "NGの人"]
                 if ng_ppl:
