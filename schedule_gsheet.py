@@ -3,41 +3,38 @@ import pandas as pd
 import datetime
 import gspread
 import json
+import os
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
 # 0. 設定エリア
 # ==========================================
-# ローカルで動かすときの鍵ファイル名
 SECRET_FILE = 'secret.json'
-
 # あなたのスプレッドシートID
 SPREADSHEET_KEY = '1-8cu7x-zC41ot512uYHL0UhD7hxdfnr0zyQ1H3BrlmI'
 
 # ==========================================
-# 1. Googleスプレッドシート接続機能 (ハイブリッド版)
+# 1. Googleスプレッドシート接続機能
 # ==========================================
 @st.cache_resource
 def get_sheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
-    # Streamlit Cloudの「Secrets」に鍵があるか確認
-    if "gcp_key_json" in st.secrets:
+    # PCにあるか確認
+    if os.path.exists(SECRET_FILE):
+        creds = ServiceAccountCredentials.from_json_keyfile_name(SECRET_FILE, scope)
+    # なければWebのSecretsを確認
+    elif "gcp_key_json" in st.secrets:
         key_dict = json.loads(st.secrets["gcp_key_json"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, scope)
     else:
-        # なければ、自分のPCにある 'secret.json' を使う
-        try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name(SECRET_FILE, scope)
-        except FileNotFoundError:
-            st.error("鍵ファイルが見つかりません。PCなら 'secret.json' を置いてください。WebならSecretsを設定してください。")
-            st.stop()
+        st.error("鍵ファイルが見つかりません。")
+        st.stop()
             
     client = gspread.authorize(creds)
     return client.open_by_key(SPREADSHEET_KEY).sheet1
 
 def load_data_from_sheet():
-    """スプレッドシートからデータを読み込む"""
     try:
         sheet = get_sheet()
         raw_data = sheet.acell('A1').value
@@ -54,7 +51,6 @@ def load_data_from_sheet():
     }
 
 def save_data_to_sheet(data):
-    """スプレッドシートにデータを保存する"""
     try:
         sheet = get_sheet()
         json_str = json.dumps(data, ensure_ascii=False)
@@ -232,31 +228,41 @@ with tab3:
         
         if top_dates:
             top_score = ranked_df.iloc[0]["合計"]
-            st.success(f"🎉 候補日は **{len(top_dates)}つ** あります！（スコア: {int(top_score)}点）")
+            st.success(f"🎉 最適な候補日は **{len(top_dates)}つ** あります！（スコア: {int(top_score)}点）")
             
-            # --- LINE用テキスト出力機能 ---
+            # --- LINE用テキスト出力機能 (改) ---
             st.write("---")
             st.subheader("📋 LINE連絡用コピー")
             
-            # テキスト生成
-            clip_text = f"【{data['title']} 日程決定！🎉】\n\n"
-            clip_text += f"📅 日時: {top_dates[0]}\n"
-            clip_text += f"📊 参加スコア: {int(top_score)}点\n"
+            # テキスト生成ロジック
+            clip_text = f"【{data['title']} 日程調整の結果 🗓️】\n\n"
             
+            if len(top_dates) == 1:
+                clip_text += "🎉 日程決定！\n"
+                clip_text += f"📅 {top_dates[0]}\n"
+            else:
+                clip_text += f"🎉 候補日が{len(top_dates)}つあります！\n"
+                clip_text += "以下の日程が一番人気です👇\n"
+                for d in top_dates:
+                    clip_text += f"・ {d}\n"
+
+            clip_text += f"\n📊 参加スコア: {int(top_score)}点\n"
+            
+            # NG情報の表示（代表して最初の日付のNGを表示）
             ng_name = ranked_df.loc[top_dates[0], "NGの人"]
             if ng_name:
                 clip_text += f"⚠️ NG: {ng_name}\n"
             else:
                 clip_text += f"✨ 全員参加OK！\n"
             
-            clip_text += "\n👇 詳細はこちら\n"
-            # 本番ではここにあなたのアプリのURLを入れると親切です
+            clip_text += "\n👇 詳細・投票修正はこちら\n"
             clip_text += "(ここにURLを貼る)"
             
             st.code(clip_text, language="text")
             st.caption("👆 右上のコピーボタンを押してLINEに貼ってください")
             # ---------------------------
 
+            # 画面上の風船演出
             for d in top_dates:
                 ng_ppl = ranked_df.loc[d, "NGの人"]
                 if ng_ppl:
