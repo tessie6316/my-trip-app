@@ -6,6 +6,64 @@ import urllib.parse
 import json
 import io
 
+def check_password():
+
+    """パスワード認証"""
+
+    
+
+    # セッションステートにログイン状態がない場合は初期化
+
+    if 'logged_in' not in st.session_state:
+
+        st.session_state.logged_in = False
+
+
+
+    # ログイン済みなら何もしない
+
+    if st.session_state.logged_in:
+
+        return True
+
+
+
+    # ログイン画面の表示
+
+    st.title("🔒 旅のしおり作成ツール")
+
+    password = st.text_input("購入した「合言葉」を入力してください", type="password")
+
+    
+
+    # 合言葉の設定（これをnoteの有料部分に書く！）
+
+    SECRET_PASSWORD = "okinawa_saiko" 
+
+    
+
+    if st.button("ログイン"):
+
+        if password == SECRET_PASSWORD:
+
+            st.session_state.logged_in = True
+
+            st.rerun() # 画面を再読み込みしてアプリを表示
+
+        else:
+
+            st.error("合言葉が違います")
+
+    return False
+
+
+
+# メイン処理の前に認証チェック
+
+if not check_password():
+
+    st.stop() 
+
 # ==========================================
 # 0. アプリ設定 & データ保持
 # ==========================================
