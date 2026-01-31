@@ -6,6 +6,14 @@ import urllib.parse
 import json
 import io
 
+
+# ▼ ここを修正！
+st.set_page_config(
+    page_title="【アプリ不要】最強の旅のしおり作成ツール",  # ← ここがカードの太字タイトルになります
+    page_icon="✈️",
+    layout="wide"
+)
+
 def check_password():
 
     """パスワード認証"""
