@@ -4,66 +4,33 @@ import requests
 import base64
 import urllib.parse
 import json
-import io
+import datetime
 
-
-
+# ==========================================
+# 認証機能
+# ==========================================
 def check_password():
-
     """パスワード認証"""
-
-    
-
-    # セッションステートにログイン状態がない場合は初期化
-
     if 'logged_in' not in st.session_state:
-
         st.session_state.logged_in = False
 
-
-
-    # ログイン済みなら何もしない
-
     if st.session_state.logged_in:
-
         return True
 
-
-
-    # ログイン画面の表示
-
     st.title("🔒 旅のしおり作成ツール")
-
     password = st.text_input("購入した「合言葉」を入力してください", type="password")
-
     
-
-    # 合言葉の設定（これをnoteの有料部分に書く！）
-
     SECRET_PASSWORD = "okinawa_saiko" 
-
     
-
     if st.button("ログイン"):
-
         if password == SECRET_PASSWORD:
-
             st.session_state.logged_in = True
-
-            st.rerun() # 画面を再読み込みしてアプリを表示
-
+            st.rerun()
         else:
-
             st.error("合言葉が違います")
-
     return False
 
-
-
-# メイン処理の前に認証チェック
-
 if not check_password():
-
     st.stop() 
 
 # ==========================================
@@ -71,26 +38,30 @@ if not check_password():
 # ==========================================
 st.set_page_config(page_title="旅のしおりマスター", page_icon="📝", layout="wide")
 
-# データが消えないように保持
+# データ初期化
 if 'travel_data' not in st.session_state:
     st.session_state.travel_data = {
-        "title": "沖縄旅行 2026",
-        "hotel_name": "ホテルストーク那覇新都心",
-        "members": ["あなた", "友達A", "友達B"],
+        "title": "", 
+        "hotel_name": "",
+        "members": [], # 修正: 初期値空
         "flights": [],
         "spots": [],
         "checklist": ["航空券 (アプリ)", "免許証", "現金", "スマホ", "充電器", "着替え"],
-        "payments": []
+        "payments": [] 
     }
 
 data = st.session_state.travel_data
+
+# フライト入力の入れ替え用ステート初期化
+if "f_dep_val" not in st.session_state: st.session_state.f_dep_val = ""
+if "f_arr_val" not in st.session_state: st.session_state.f_arr_val = ""
 
 # ==========================================
 # 1. ロジック関数群
 # ==========================================
 
 def get_image_base64(uploaded_file):
-    """アップロード画像をBase64に変換"""
+    """画像変換処理"""
     if uploaded_file is None:
         return get_fallback_image()
     try:
@@ -102,7 +73,7 @@ def get_image_base64(uploaded_file):
         return get_fallback_image()
 
 def get_fallback_image():
-    """デフォルト画像"""
+    """デフォルト画像取得"""
     url = "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80"
     try:
         response = requests.get(url, timeout=5)
@@ -111,18 +82,23 @@ def get_fallback_image():
     except:
         return ""
 
-def calculate_split_settlement():
+def format_date_jp(d):
+    """日付オブジェクトを 2/17(火) 形式に変換"""
+    wdays = ["月", "火", "水", "木", "金", "土", "日"]
+    return f"{d.month}/{d.day}({wdays[d.weekday()]})"
+
+def calculate_split_settlement(payment_list, members):
     """割り勘計算ロジック"""
-    if not data["payments"]:
+    if not payment_list:
         return "まだ支払いデータがありません。"
     
-    total = sum(p['amount'] for p in data['payments'])
-    if len(data["members"]) == 0: return "メンバーがいません"
+    total = sum(p['amount'] for p in payment_list)
+    if len(members) == 0: return "メンバーがいません"
     
-    avg = total / len(data["members"])
+    avg = total / len(members)
     
-    balances = {m: -avg for m in data["members"]}
-    for p in data["payments"]:
+    balances = {m: -avg for m in members}
+    for p in payment_list:
         if p['payer'] in balances:
             balances[p['payer']] += p['amount']
         
@@ -140,11 +116,27 @@ def calculate_split_settlement():
         if receivers[r_idx][1] < 1: r_idx += 1
         if payers[p_idx][1] < 1: p_idx += 1
         
-    res_text = "========= 精算レポート =========\\n"
-    res_text += "\\n".join(results)
-    res_text += f"\\n\\n総額: {int(total)}円 (1人あたり: {int(avg)}円)\\n"
+    res_text = "========= 精算レポート =========\n"
+    res_text += "\n".join(results)
+    res_text += f"\n\n総額: {int(total)}円 (1人あたり: {int(avg)}円)\n"
     res_text += "================================"
     return res_text
+
+def encrypt_data(obj):
+    """データをJSON化してBase64エンコード（暗号化風）"""
+    try:
+        json_str = json.dumps(obj, ensure_ascii=False)
+        return base64.b64encode(json_str.encode()).decode()
+    except:
+        return "Error"
+
+def decrypt_data(cipher_text):
+    """Base64をデコードしてJSONに戻す"""
+    try:
+        decoded = base64.b64decode(cipher_text).decode()
+        return json.loads(decoded)
+    except:
+        return None
 
 def generate_html_string(header_bg, settlement_text):
     """HTML生成"""
@@ -166,8 +158,9 @@ def generate_html_string(header_bg, settlement_text):
     itinerary_html = ""
     spots_df = pd.DataFrame(data["spots"])
     if not spots_df.empty:
-        spots_df = spots_df.sort_values(by=["day", "time"])
-        days_grouped = spots_df.groupby("day")
+        # 日付と時間でソート
+        spots_df = spots_df.sort_values(by=["day_obj", "time"]) 
+        days_grouped = spots_df.groupby("day_str") 
 
         for day, group in days_grouped:
             waypoints = "/".join([f"{urllib.parse.quote(row['query'])}" for _, row in group.iterrows()])
@@ -186,7 +179,7 @@ def generate_html_string(header_bg, settlement_text):
                 current_nav_url = f"https://www.google.com/maps/search/?api=1&query={encoded_query}"
                 
                 if i == 0:
-                    if data["hotel_name"] and "1日目" not in day:
+                    if data["hotel_name"]:
                         encoded_hotel = urllib.parse.quote(data["hotel_name"])
                         prev_nav_url = f"https://www.google.com/maps/dir/?api=1&origin={encoded_hotel}&destination={encoded_query}&travelmode=driving"
                         prev_nav_text = "🏨 ホテルから行く"
@@ -218,7 +211,7 @@ def generate_html_string(header_bg, settlement_text):
     for i, item in enumerate(data["checklist"]):
         checklist_html += f"""<div class="c-item"><input type="checkbox" id="c{i}" class="save-check"><label for="c{i}">{item}</label></div>"""
 
-    # HTMLテンプレート (精算レポート埋め込み付き)
+    # HTMLテンプレート
     full_html = f"""
 <!DOCTYPE html>
 <html lang="ja">
@@ -256,11 +249,11 @@ def generate_html_string(header_bg, settlement_text):
     .section-head {{ padding: 15px; font-weight: bold; background: #e9ecef; border-bottom: 1px solid #ddd; margin-top: 20px; }}
     .c-item {{ background: white; padding: 15px; border-bottom: 1px solid #eee; display: flex; align-items: center; }}
     .c-item input {{ transform: scale(1.5); margin-right: 15px; }}
+    .settlement-box {{ margin: 20px; padding: 20px; background: #333; color: #fff; font-family: monospace; white-space: pre-wrap; border-radius: 8px; }}
     .b-form {{ padding: 15px; background: #fff; display: flex; gap: 10px; border-bottom: 1px solid #eee; }}
     .b-form input {{ padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; -webkit-appearance: none; }}
     .b-total {{ padding: 20px 15px; text-align: right; font-weight: bold; font-size: 1.4em; color: #0041cd; background: #f0f8ff; border-top: 1px solid #ddd; }}
     .del-btn {{ color: red; border: none; background: none; font-weight: bold; font-size: 1.5em; padding: 0 15px; }}
-    .settlement-box {{ margin: 20px; padding: 20px; background: #333; color: #fff; font-family: monospace; white-space: pre-wrap; border-radius: 8px; }}
 </style>
 </head>
 <body>
@@ -342,22 +335,26 @@ def generate_html_string(header_bg, settlement_text):
 
 st.title("旅のしおりマスター ✈️")
 
-# タブ定義（6つ！）
+# タブ定義
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["基本設定", "🎒 持ち物", "✈️ 移動", "📍 行程", "💰 割り勘", "📤 出力"])
 
 # --- タブ1: 基本設定 ---
 with tab1:
-    data["title"] = st.text_input("旅行タイトル", data["title"])
-    data["hotel_name"] = st.text_input("ホテル名（ナビ起点）", data["hotel_name"])
-    m_str = st.text_area("参加メンバー（カンマ区切り）", ",".join(data["members"]))
+    data["title"] = st.text_input("旅行タイトル", value=data["title"], placeholder="例: 沖縄旅行 2026")
+    data["hotel_name"] = st.text_input("ホテル名（ナビ起点）", value=data["hotel_name"], placeholder="例: ホテルストーク那覇新都心")
+    
+    # 修正: メンバーもプレースホルダー化
+    m_str_val = ",".join(data["members"])
+    m_str = st.text_area("参加メンバー（カンマ区切り）", value=m_str_val, placeholder="例: あなた, 友達A, 友達B")
     data["members"] = [m.strip() for m in m_str.split(",") if m.strip()]
+    
     uploaded_file = st.file_uploader("ヘッダー画像を選択", type=['jpg','png','jpeg'])
 
-# --- タブ2: 持ち物 (復活！) ---
+# --- タブ2: 持ち物 ---
 with tab2:
     st.subheader("🎒 持ち物リスト")
     col1, col2 = st.columns([3, 1])
-    new_item = col1.text_input("新しい持ち物を追加")
+    new_item = col1.text_input("新しい持ち物を追加", placeholder="例: 日焼け止め")
     if col2.button("追加", key="add_item"):
         if new_item:
             data["checklist"].append(new_item)
@@ -370,21 +367,39 @@ with tab2:
             if c2.button("削除", key=f"del_item_{i}"):
                 data["checklist"].pop(i)
                 st.rerun()
-    else:
-        st.info("持ち物がありません")
 
-# --- タブ3: 移動 (復活！) ---
+# --- タブ3: 移動 ---
 with tab3:
     st.subheader("✈️ フライト・移動情報")
-    with st.form("flight_form", clear_on_submit=True):
+
+    # 入れ替えボタンのコールバック関数
+    def swap_locs():
+        st.session_state.f_dep_val, st.session_state.f_arr_val = st.session_state.f_arr_val, st.session_state.f_dep_val
+
+    with st.form("flight_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
-        f_date = c1.text_input("日付", "2/17(火)")
-        f_no = c2.text_input("便名", "ANA309")
-        f_route = st.text_input("区間", "中部 -> 那覇")
-        f_memo = st.text_input("メモ", "10分前集合")
-        if st.form_submit_button("フライトを追加"):
-            data["flights"].append({"date": f_date, "no": f_no, "route": f_route, "memo": f_memo})
-            st.rerun()
+        f_date_obj = c1.date_input("日付")
+        f_no = c2.text_input("便名", placeholder="例: ANA309")
+        
+        c3, c4 = st.columns(2)
+        f_dep = c3.text_input("出発地", key="f_dep_val", placeholder="例: 中部")
+        f_arr = c4.text_input("到着地", key="f_arr_val", placeholder="例: 那覇")
+        
+        f_memo = st.text_input("メモ", placeholder="例: 15分前集合")
+        
+        col_submit, col_swap = st.columns([1, 1])
+        submitted = col_submit.form_submit_button("フライトを追加")
+        
+        if submitted:
+            if f_dep and f_arr:
+                date_str = format_date_jp(f_date_obj)
+                route_str = f"{f_dep} -> {f_arr}"
+                data["flights"].append({"date": date_str, "no": f_no, "route": route_str, "memo": f_memo})
+                st.rerun()
+            else:
+                st.error("出発地と到着地は必須です")
+    
+    st.button("🔄 出発地と到着地を入れ替え (次の入力用)", on_click=swap_locs)
             
     if data["flights"]:
         st.table(pd.DataFrame(data["flights"]))
@@ -397,51 +412,96 @@ with tab4:
     st.subheader("📍 スポット設定")
     with st.form("spot_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        s_day = c1.text_input("日程", "1日目 2/17(火)")
-        s_time = c2.text_input("時間", "12:00")
-        s_name = st.text_input("場所名（表示用）")
+        s_date_obj = c1.date_input("日程")
+        
+        # 時間と分を別々のセレクトボックスで選択（1分単位、スクロール不要）
+        col_h, col_m = c2.columns(2)
+        hours = [f"{h:02d}" for h in range(24)]
+        minutes = [f"{m:02d}" for m in range(60)]
+        
+        s_hour = col_h.selectbox("時", hours, index=12) # デフォルト12時
+        s_min = col_m.selectbox("分", minutes, index=0) # デフォルト00分
+        
+        s_name = st.text_input("場所名（表示用）", placeholder="例: 国際通り")
         s_query = st.text_input("検索名（Googleマップ用）", placeholder="空欄なら場所名と同じになります")
         s_cat = st.selectbox("カテゴリ", ["観光", "食事", "宿泊", "空港", "体験"])
-        s_memo = st.text_area("メモ")
+        s_memo = st.text_area("メモ", placeholder="例: お土産を買う")
         
         if st.form_submit_button("スポットを追加") and s_name:
             q = s_query if s_query else s_name
-            data["spots"].append({"day": s_day, "time": s_time, "name": s_name, "query": q, "cat": s_cat, "memo": s_memo})
+            date_str = format_date_jp(s_date_obj)
+            time_str = f"{s_hour}:{s_min}"
+            
+            data["spots"].append({
+                "day_obj": s_date_obj, 
+                "day_str": date_str,   
+                "time": time_str,
+                "name": s_name, 
+                "query": q, 
+                "cat": s_cat, 
+                "memo": s_memo
+            })
             st.rerun()
 
     if data["spots"]:
-        st.dataframe(pd.DataFrame(data["spots"]))
+        disp_df = pd.DataFrame(data["spots"])
+        if not disp_df.empty:
+            st.dataframe(disp_df[["day_str", "time", "name", "cat", "memo"]])
+            
         if st.button("全削除", key="del_spots"):
             data["spots"] = []
             st.rerun()
 
 # --- タブ5: 割り勘 ---
 with tab5:
-    st.subheader("💰 割り勘入力")
+    st.subheader("💰 割り勘マスター")
+    
+    st.markdown("##### 1. 支払いを記録")
     if not data["members"]:
         st.warning("基本設定タブでメンバーを登録してください")
     else:
         with st.form("pay_form", clear_on_submit=True):
-            p = st.selectbox("誰が払った？", data["members"])
-            a = st.number_input("いくら？", min_value=0, step=100)
-            m = st.text_input("何に？")
-            if st.form_submit_button("支払い記録"):
+            col_a, col_b = st.columns(2)
+            p = col_a.selectbox("誰が払った？", data["members"])
+            a = col_b.number_input("いくら？", min_value=0, step=100)
+            m = st.text_input("何に？", placeholder="例: レンタカー代")
+            if st.form_submit_button("記録追加"):
                 data["payments"].append({"payer":p, "amount":a, "memo":m})
                 st.rerun()
                 
-        # 支払い履歴の表示
-        if data["payments"]:
-            st.write("---")
-            st.write("履歴:")
-            for i, p in enumerate(data["payments"]):
-                col_a, col_b = st.columns([4, 1])
-                col_a.text(f"{p['payer']}が {p['amount']}円 ({p['memo']})")
-                if col_b.button("削除", key=f"del_pay_{i}"):
+    if data["payments"]:
+        st.markdown("##### 2. 現在の集計")
+        st.code(calculate_split_settlement(data["payments"], data["members"]))
+        
+        with st.expander("詳細履歴を確認・削除"):
+            for i, pay in enumerate(data["payments"]):
+                c1, c2 = st.columns([5, 1])
+                c1.text(f"{pay['payer']} -> {pay['amount']}円 ({pay['memo']})")
+                if c2.button("削除", key=f"del_pay_{i}"):
                     data["payments"].pop(i)
                     st.rerun()
-            
-            st.write("---")
-            st.code(calculate_split_settlement()) # 計算結果表示
+    else:
+        st.info("支払いデータはありません。")
+    
+    st.markdown("---")
+    
+    st.markdown("##### 3. データの引き継ぎ・共有 (暗号化)")
+    if data["payments"]:
+        encrypted_str = encrypt_data(data["payments"])
+        st.text_area("暗号コード (これをコピーして共有)", value=encrypted_str, height=100)
+    else:
+        st.caption("支払いデータがないためコード生成できません")
+        
+    st.markdown("##### 4. 暗号コードから計算 (復元)")
+    input_cipher = st.text_area("ここに暗号コードを貼り付け", placeholder="受け取った謎の文字列をここに...")
+    if st.button("解読して計算！"):
+        decrypted_list = decrypt_data(input_cipher)
+        if decrypted_list:
+            result_text = calculate_split_settlement(decrypted_list, data["members"])
+            st.success("解読成功！")
+            st.code(result_text)
+        else:
+            st.error("無効なコードです")
 
 # --- タブ6: 出力 ---
 with tab6:
@@ -449,7 +509,7 @@ with tab6:
     st.markdown("設定が完了したらダウンロードしてください。")
     
     header_base64 = get_image_base64(uploaded_file)
-    settlement_text = calculate_split_settlement()
+    settlement_text = calculate_split_settlement(data["payments"], data["members"])
     
     html_string = generate_html_string(header_base64, settlement_text)
     
