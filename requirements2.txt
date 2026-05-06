@@ -1,0 +1,5 @@
+%%writefile requirements2.txt
+streamlit
+pandas
+gspread
+google-auth
