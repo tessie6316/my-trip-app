@@ -97,7 +97,7 @@ with st.form(key='expense_form'):
     col1, col2 = st.columns(2)
     with col1:
         expense_date = st.date_input('日付', datetime.date.today())
-        expense_category = st.selectbox('大分類', ['食費', '交通費', '趣味費', '経費','特定支出','自己投資', 'その他'])
+        expense_category = st.selectbox('大分類', ['食費', '交通費', '宿泊費','趣味費', '経費','特定支出','自己投資', 'その他'])
     with col2:
         medium_list = df_balances['媒体'].tolist()
         selected_medium = st.selectbox('支払い媒体を選択', medium_list)
