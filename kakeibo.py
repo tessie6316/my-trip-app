@@ -47,17 +47,17 @@ def save_balance_data(df):
     data_to_write = [df.columns.values.tolist()] + df.values.tolist()
     ws.update(data_to_write) 
 
-# --- 支出ログ（2枚目のシート）への追記関数 ---
-def append_expense_log(date, category, memo, medium, amount):
+# --- ログ（2枚目のシート）への追記関数 ---
+def append_transaction_log(date, category, memo, medium, amount):
     sh = get_spreadsheet()
     
     # 2枚目のシート（インデックス1）を取得。無ければ自動作成する。
     try:
         ws_log = sh.get_worksheet(1)
     except Exception:
-        ws_log = sh.add_worksheet(title="支出ログ", rows="1000", cols="5")
+        ws_log = sh.add_worksheet(title="トランザクションログ", rows="1000", cols="5")
         # ヘッダー行を作成
-        ws_log.append_row(["日付", "大分類", "小分類・メモ", "支払い媒体", "金額"])
+        ws_log.append_row(["日付", "大分類", "小分類・メモ", "対象媒体", "金額"])
         
     # ログを最下段に追記
     ws_log.append_row([str(date), category, memo, medium, amount])
@@ -75,28 +75,38 @@ st.title('家計簿 ＆ 総資産ダッシュボード')
 # --- 1. 収入の入力セクション ---
 st.header('👛 収入の登録')
 with st.form(key='income_form'):
-    medium_list = df_balances['媒体'].tolist()
-    selected_medium_inc = st.selectbox('入金媒体を選択', medium_list)
-    income_amount = st.number_input('収入金額（円）', min_value=0, step=100, key='income_input')
+    col1, col2 = st.columns(2)
+    with col1:
+        income_date = st.date_input('日付', datetime.date.today(), key='income_date')
+        medium_list = df_balances['媒体'].tolist()
+        selected_medium_inc = st.selectbox('入金媒体を選択', medium_list)
+    with col2:
+        income_amount = st.number_input('収入金額（円）', min_value=0, step=100, key='income_input')
     
-    submit_income = st.form_submit_button(label='収入を足し算する')
+    income_memo = st.text_input('メモ（例: 給与、立替の返済、メルカリ売上 など）')
+    submit_income = st.form_submit_button(label='収入を登録して残高に足す')
 
     if submit_income:
         if income_amount > 0:
             df_balances.loc[df_balances['媒体'] == selected_medium_inc, '残高'] += income_amount
             save_balance_data(df_balances)
-            st.success(f'{selected_medium_inc}に {income_amount:,}円 を足し算しました。')
+            
+            # 収入ログを追記
+            append_transaction_log(income_date, "収入", income_memo, selected_medium_inc, income_amount)
+            
+            st.success(f'{selected_medium_inc}に {income_amount:,}円 を足し算し、ログに記録しました！')
         else:
             st.warning('収入金額を入力してください。')
 
 st.divider()
 
-# --- 2. 支出の入力セクション（内訳・ログ機能追加） ---
+# --- 2. 支出の入力セクション ---
 st.header('💸 支出の登録（内訳記録）')
 with st.form(key='expense_form'):
     col1, col2 = st.columns(2)
     with col1:
         expense_date = st.date_input('日付', datetime.date.today())
+        # あなたがカスタマイズした大分類を適用
         expense_category = st.selectbox('大分類', ['食費', '交通費', '宿泊費','趣味費', '経費','特定支出','自己投資', 'その他'])
     with col2:
         medium_list = df_balances['媒体'].tolist()
@@ -114,7 +124,7 @@ with st.form(key='expense_form'):
             save_balance_data(df_balances)
             
             # 2. 支出ログをSheet2に追記
-            append_expense_log(expense_date, expense_category, expense_memo, selected_medium, expense_amount)
+            append_transaction_log(expense_date, expense_category, expense_memo, selected_medium, expense_amount)
             
             st.success(f'{selected_medium}から {expense_amount:,}円 を引き算し、支出ログに記録しました！')
         else:
@@ -122,10 +132,44 @@ with st.form(key='expense_form'):
 
 st.divider()
 
-# --- 3. 媒体と残高の登録・更新セクション ---
+# --- 3. 🔄 媒体間の振替セクション ---
+st.header('🔄 媒体間の振替（資金移動）')
+with st.form(key='transfer_form'):
+    col1, col2 = st.columns(2)
+    with col1:
+        transfer_date = st.date_input('日付', datetime.date.today(), key='transfer_date')
+        medium_list = df_balances['媒体'].tolist()
+        from_medium = st.selectbox('移動元の媒体（引く）', medium_list, key='from_medium_select')
+    with col2:
+        transfer_amount = st.number_input('振替金額（円）', min_value=0, step=100, key='transfer_input')
+        to_medium = st.selectbox('移動先の媒体（足す）', medium_list, key='to_medium_select')
+        
+    transfer_memo = st.text_input('メモ（例: ATM引き出し、PayPayチャージ など）')
+    submit_transfer = st.form_submit_button(label='振替を実行して記録する')
+
+    if submit_transfer:
+        if from_medium == to_medium:
+            st.warning('移動元と移動先には異なる媒体を選択してください。')
+        elif transfer_amount <= 0:
+            st.warning('振替金額を入力してください。')
+        else:
+            # 1. 移動元から引き算、移動先に足し算
+            df_balances.loc[df_balances['媒体'] == from_medium, '残高'] -= transfer_amount
+            df_balances.loc[df_balances['媒体'] == to_medium, '残高'] += transfer_amount
+            save_balance_data(df_balances)
+            
+            # 2. 証跡としてログに記録（対象媒体を「元→先」と表記）
+            log_medium_str = f"{from_medium} → {to_medium}"
+            append_transaction_log(transfer_date, "振替", transfer_memo, log_medium_str, transfer_amount)
+            
+            st.success(f'【振替完了】{from_medium} から {to_medium} へ {transfer_amount:,}円 を移動し、ログに記録しました。')
+
+st.divider()
+
+# --- 4. 媒体と残高の登録・更新セクション ---
 st.header('🏦 媒体と残高の登録')
 with st.form(key='add_medium_form'):
-    new_medium = st.text_input('媒体名（例: 口座, PayPay, 楽天Edy など）')
+    new_medium = st.text_input('媒体名（例: 口座, PayPay, 現金（財布）など）')
     initial_balance = st.number_input('現在の残高（円）', step=1000)
     
     submit_medium = st.form_submit_button(label='残高を保存する')
@@ -143,7 +187,7 @@ with st.form(key='add_medium_form'):
 
 st.divider()
 
-# --- 4. 媒体名の編集セクション ---
+# --- 5. 媒体名の編集セクション ---
 st.header('✏️ 媒体名の編集')
 with st.form(key='edit_medium_form'):
     medium_list = df_balances['媒体'].tolist()
@@ -164,7 +208,7 @@ with st.form(key='edit_medium_form'):
 
 st.divider()
 
-# --- 5. 現在の資産状況（テキスト出力） ---
+# --- 6. 現在の資産状況（テキスト出力） ---
 st.header('📊 現在の資産状況')
 
 total_assets = df_balances['残高'].sum()
