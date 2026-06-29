@@ -45,7 +45,8 @@ def save_balance_data(df):
     ws = sh.get_worksheet(0)
     ws.clear() 
     data_to_write = [df.columns.values.tolist()] + df.values.tolist()
-    ws.update(data_to_write) 
+    # 【修正】数値をそのまま数値として記録するためにオプションを追加
+    ws.update(values=data_to_write, value_input_option='USER_ENTERED') 
 
 # --- ログ（2枚目のシート）への追記関数 ---
 def append_transaction_log(date, category, memo, medium, amount):
@@ -57,10 +58,10 @@ def append_transaction_log(date, category, memo, medium, amount):
     except Exception:
         ws_log = sh.add_worksheet(title="トランザクションログ", rows="1000", cols="5")
         # ヘッダー行を作成
-        ws_log.append_row(["日付", "大分類", "小分類・メモ", "対象媒体", "金額"])
+        ws_log.append_row(["日付", "大分類", "小分類・メモ", "対象媒体", "金額"], value_input_option='USER_ENTERED')
         
-    # ログを最下段に追記
-    ws_log.append_row([str(date), category, memo, medium, amount])
+    # 【修正】日付が文字列扱いになって ' がつくのを防ぐためにオプションを追加
+    ws_log.append_row([str(date), category, memo, medium, amount], value_input_option='USER_ENTERED')
 
 
 # ==========================================
